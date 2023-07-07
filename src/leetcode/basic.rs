@@ -1537,4 +1537,5 @@ mod tests {
         println!("c is {:?}", c);
     }
 
+    //rust生命周期
 }
