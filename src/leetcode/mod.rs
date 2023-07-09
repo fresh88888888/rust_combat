@@ -3,6 +3,7 @@ mod concatenates_all_words_of_substring;
 mod repeated_of_dna_sequence;
 mod length_of_smallest_subarray;
 mod basic;
+mod lifetime;
 
 pub use self::no_repeat_char_of_substring::length_of_longest_substring;
 pub use self::concatenates_all_words_of_substring::find_substring;
