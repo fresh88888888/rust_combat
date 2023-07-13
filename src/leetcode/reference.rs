@@ -35,6 +35,12 @@ mod tests {
     //* 引用值 */
     //在《【Rust】所有权》章节中，我们说到函数传值会转移值得所有权，for 循环也会，例如，对下面的代码，我们在将 table 传递给 show 函数之后，table 就处于未初始化状态：
 
+    use std::{
+        ops::{Add, AddAssign}, borrow::Cow, vec, collections::BTreeSet, iter::from_fn, marker::PhantomData, sync::atomic::{AtomicU64, self}, any::type_name,
+    };
+
+    use rand::random;
+
     use super::*;
 
     #[test]
@@ -238,9 +244,9 @@ mod tests {
         assert_eq!(r + &1009, 1729);
     }
     //这种情况下，Rust 会创建一个持有表达式值的匿名变量，然后再从匿名变量创建一个引用。匿名表达式的生命周期取决于我们怎么使用这个引用：
-    
+
     //如果我们是将这个引用用在赋值语句 let，结构体字段或者数组中，那么这个匿名变量的生命周期和我们 let 语句初始化的变量一样，例如上面的 r；
-    
+
     //否则，这个匿名变量在当前语句结束就会被释放掉，例如上面为 1009 创建的匿名变量在 assert_eq! 结束就会被丢掉；
 
     //* 胖指针 */
@@ -256,7 +262,7 @@ mod tests {
 
     //在上面的例子中，有三个生命周期，变量 x 和 r 的生命周期是从它们初始化到编译器认为它们不再使用为止。第三个生命周期是一个引用类型，我们引用自 x 并且存储在 r 中。
 
-    //正如我们上面看到的，生命周期有一个很明显的约束，就是它不能比它引用的值活的久。因为如果这里 x 出了内部的括号，就会被释放，所有来自于它的引用都会变成一个悬垂指针，所以，Rust 规定 
+    //正如我们上面看到的，生命周期有一个很明显的约束，就是它不能比它引用的值活的久。因为如果这里 x 出了内部的括号，就会被释放，所有来自于它的引用都会变成一个悬垂指针，所以，Rust 规定
     //约束 1：值的生命周期必须大于它的引用的生命周期，上面的示例中，x 的生命周期就小于它的引用的生命周期：还有另外一个约束，约束 2：如果我们将引用存储在一个变量中，那么这个引用必须要覆盖这个变量的整个生命周期，
     //从它的初始化到最后一次使用为止。上面示例中，x 引用的生命周期没有覆盖到 r 的使用范围：
 
@@ -266,9 +272,9 @@ mod tests {
     //* 更新全局引用变量 */
     //当我们传递一个引用给函数时，Rust 如何保证安全使用呢？假设我们有一个函数 f，接受一个引用作为参数，并且把它存储在全局变量中，例如：
     // 不能编译
-    // static mut STASH: &i32; 
+    // static mut STASH: &i32;
 
-    // fn f(p:&i32){ 
+    // fn f(p:&i32){
     //     STASH=p;
     // }
     //Rust 的全局变量时静态创建的，贯穿应用程序的整个生命周期。像任何其他声明一样，Rust 的模块系统控制静态变量在什么地方可见，所以它们仅仅是在生命周期里是全局的，而不是可见性。上面的代码是有一些问题的，没有遵循两个规则：
@@ -284,11 +290,328 @@ mod tests {
     //为了让代码更加完善，我们需要手动函数参数的生命周期，这里 'a 读作 tick A，我们将 <'a> 读作 for any lifetime 'a。所以下面的代码定义了一个接受具有任意生命周期 'a 参数 p 的函数 f：
     // fn f<'a>(p: &'a i32) { ... }
     //由于 STASH 的生命周期和应用程序一样，所以我们必须赋予它一个具有相同生命周期的引用，Rust 将这种生命周期称之为 'static lifetime，静态生命周期，所以如果参数的 p 的声明是 'a，是不允许的。编译器直接拒绝编译我们的代码：
-    
+
     //编译器的提示很明显，f 需要一个具有静态生命周期的参数 p，因此我们现在可以将代码修改成如下的样子：
-    
 
     //从一开始的 f(p: &i32) 到结束时的 f(p: &'static i32)，如果不在函数的签名中反映该意图，我们就无法编写一个将引用固定在全局变量中的函数，我们必须指出引用的生命周期，
     //满足约束 2：如果我们将引用存储在一个变量中，那么这个引用必须要覆盖这个变量的整个生命周期，从它的初始化到最后一次使用为止。
+
+    struct TreeNode<T> {
+        element: T,
+        left: BinaryTree<T>,
+        right: BinaryTree<T>,
+    }
+
+    enum BinaryTree<T> {
+        Empty,
+        NoneEmpty(Box<TreeNode<T>>),
+    }
+    ///这几行代码定义了一个可以存储任意数量的 T 类型值的 BinaryTree，每个 BinaryTree 要么为空要么不为空。如果是空的，那么什么数据都不包，如果不为空，那么它有一个 Box，包含一个指向堆数据的指针。
+    ///每个 TreeNode 值包含一个实际元素，以及另外两个 BinaryTree 值。这意味着树可以包含子树，因此 NonEmpty 树可以有任意数量的后代。BinaryTree<&str> 类型值的示意图如下图所示。
+    ///与 Option<Box<T>> 一样，Rust 消除了 tag 字段，因此 BinaryTree 值只是一个机器字。
+    impl<T: Ord> BinaryTree<T> {
+        fn add(&mut self, value: T) {
+            match *self {
+                BinaryTree::Empty => {
+                    *self = BinaryTree::NoneEmpty(Box::new(TreeNode {
+                        element: value,
+                        left: BinaryTree::Empty,
+                        right: BinaryTree::Empty,
+                    }))
+                }
+                BinaryTree::NoneEmpty(ref mut node) => {
+                    if value <= node.element {
+                        node.left.add(value);
+                    } else {
+                        node.right.add(value);
+                    }
+                }
+            }
+        }
+    }
+
+    #[derive(Debug, Eq, Clone, Copy)]
+    struct Complex<T> {
+        re: T,
+        im: T,
+    }
+
+    impl<T> Add for Complex<T>
+    where
+        T: Add<Output = T>,
+    {
+        type Output = Self;
+        fn add(self, rhs: Self) -> Self {
+            Complex {
+                re: self.re + rhs.re,
+                im: self.im + rhs.im,
+            }
+        }
+    }
+
+    impl<T> std::ops::Neg for Complex<T>
+    where
+        T: std::ops::Neg<Output = T>,
+    {
+        type Output = Complex<T>;
+        fn neg(self) -> Complex<T> {
+            Complex {
+                re: -self.re,
+                im: -self.im,
+            }
+        }
+    }
+
+    impl<T> AddAssign for Complex<T>
+    where
+        T: AddAssign<T>,
+    {
+        fn add_assign(&mut self, rhs: Complex<T>) {
+            self.im += rhs.im;
+            self.re += rhs.re;
+        }
+    }
+
+    impl<T> PartialEq for Complex<T>
+    where
+        T: PartialEq,
+    {
+        fn eq(&self, other: &Complex<T>) -> bool {
+            self.re == other.re && self.im == other.im
+        }
+    }
+
+    struct Img<P> {
+        width: usize,
+        pixel: Vec<P>,
+    }
+
+    impl <P: Default + Copy> Img<P> {
+        /// Create a new image of the given size.
+        fn new(width: usize, height: usize) -> Img<P> {
+            Img { width, pixel: vec![P::default(); width * height] }
+        }
+    }
+
+    impl <P> std::ops::Index<usize> for Img<P> {
+        type Output = [P];
+
+        fn index(&self, row: usize) -> &[P] {
+            let start = row * self.width;
+            &self.pixel[start..start + self.width]
+        }
+    }
+
+    impl <P> std::ops::IndexMut<usize> for Img<P> {
+        fn index_mut(&mut self, row: usize) -> &mut [P] {
+            let start: usize = row * self.width;
+            &mut self.pixel[start..start + self.width]
+        }
+    }
+
+    #[test]
+    fn operators_overloading_index_test() {
+        let image = Img::<u8>::new(10, 10);
+        println!("{:?}", &image[5]);
+    }
+
+    ///Cow（Clone-on-Write）是 Rust 中一个很有意思且很重要的数据结构。它就像 Option 一样，在返回数据的时候，提供了一种可能：要么返回一个借用的数据（只读），要么返回一个拥有所有权的数据（可写）。
+    /// Cow 的合理使用能减少不必要的堆内存分配，例如，我们写一个替换 : 的程序，如果原文字符串中没有包含 :，就返回原来的字符串；如果包含，就替换为空格，返回一个 String：
+    fn show_cow(cow: Cow<str>) -> String {
+        match cow {
+            Cow::Borrowed(v) => format!("Borrowed, {}", v),
+            Cow::Owned(v) => format!("Owned, {}", v),
+        }
+    }
+
+    fn replace_colon(input: &str) -> Cow<str> {
+        match input.find(':') {
+            None => Cow::Borrowed(input),
+            Some(_) => {
+                let mut input = input.to_string();
+                input = input.replace(':', " ");
+                Cow::Owned(input)
+            }
+        }
+    }
+
+    #[test]
+    fn cow_test() {
+        println!("{}", show_cow(replace_colon("hello world")));
+        println!("{}", show_cow(replace_colon("hello:world")));
+    }
+ 
+    #[test]
+    fn iterator_test() {
+        let v = vec![4, 20, 12, 8, 6];
+        let mut iterator = v.iter();
+        assert_eq!(iterator.next(), Some(&4));
+        assert_eq!(iterator.next(), Some(&20));
+        assert_eq!(iterator.next(), Some(&12));
+        assert_eq!(iterator.next(), Some(&8));
+        assert_eq!(iterator.next(), Some(&6));
+        assert_eq!(iterator.next(), None);
+    }
+
+    #[test]
+    fn into_iterator_test() {
+        let mut favorites = BTreeSet::new();
+        favorites.insert("Lucy in the Sky With Diamonds".to_string());
+        favorites.insert("Liebesträume No. 3".to_string());
+        let mut it = favorites.into_iter();
+        assert_eq!(it.next(), Some("Liebesträume No. 3".to_string()));
+        assert_eq!(it.next(), Some("Lucy in the Sky With Diamonds".to_string()));
+        assert_eq!(it.next(), None);
+        
+    }
+
+    #[test]
+    fn from_fn_test() {
+        let lengths: Vec<f64> = from_fn(|| Some((random::<f64>() - random::<f64>()).abs())).take(1000).collect();
+        println!("{:?}", lengths);
+    }
+    //由于这个迭代器永远返回 Some(f64)，所以它永远不会结束，但是我们通过 take(1000) 只取了前 1000 个值。
+
+    fn fibonacci() -> impl Iterator<Item = usize> {
+        let mut state = (0, 1);
+        std::iter::from_fn(move || {
+            state = (state.1, state.0 + state.1);
+            Some(state.0)
+        })
+    }
+
+    #[test]
+    fn fibonacci_test() {
+        println!("{:?}", fibonacci().take(10).collect::<Vec<usize>>());
+    }
+
+    ///许多集合类型提供了一个 drain 方法，该方法需要获取集合的可变引用，将对应区间的值从原来的集合中删掉，并且将删除的值以一个新的迭代器返回：
+    #[test]
+    fn drain_test() {
+        let mut outer = "Earth".to_string();
+        let inner = String::from_iter(outer.drain(1..4));
+        assert_eq!(outer, "Eh");
+        assert_eq!(inner, "art");
+    }
+
+    #[test]
+    fn iterator_adapter_test() {
+        let text = " ponies \n giraffes\niguanas \nsquid".to_string();
+        let v: Vec<&str> = text.lines().map(str::trim).filter(|s| *s != "iguanas").collect();
+        assert_eq!(v, ["ponies", "giraffes", "squid"]);
+    }
+
+    /// std::marker::PhantomData 是一个零大小的类型，用于标记一些类型，这些类型看起来拥有类型 T，但实际上并没有：
+    /// Rust 并不希望在定义类型时，出现目前还没使用，但未来会被使用的泛型参数，例如未使用的生命周期参数以及未使用的类型。
+    
+    #[derive(Debug, PartialEq, Eq, Default)]
+    struct Identifier<T> {
+        inner: u64,
+        phantom: PhantomData<T>,
+    }
+
+    #[derive(Debug, PartialEq, Eq, Default)]
+    struct User {
+        id: Identifier<Self>,
+    }
+
+    #[derive(Debug, PartialEq, Eq, Default)]
+    struct Product {
+        id: Identifier<Self>,
+    }
+
+    /// Identifier 中 phantom 字段的引入让 Identifier 在使用时具有了不同的静态类型，但 Identifier 中又实际没有使用类型 T。
+    #[test]
+    fn id_should_not_be_the_same() {
+        let user = User::default();
+        let product = Product::default();
+        // assert_ne!(user.id, product.id)
+        assert_eq!(user.id.inner, product.id.inner);
+    }
+
+    /// 我们可以使用泛型结构体来实现对同一种类对象不同子类对象的区分，例如，我们的系统中要设计这样一个功能，将用户分为免费用户和付费用户，而且免费用户在体验免费功能之后，
+    /// 如果想升级成付费用户也是可以的。按照我们常规的思维，可能是定义两个结构体 FreeCustomer 以及 PaidCustomer，但是我们可以通过泛型结构体来实现，例如：
+    /// 
+    /// struct Customer<T> {
+    ///   id: u64,
+    ///   name: String,
+    /// }
+    /// 
+    /// 不过，我们这里的 T 又无处安放，所以又不得不使用 PhantomData，它就像一个占位符，但是又没有大小，可以为我们持有在声明时使用不到的数据：
+    
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct Customer<T> {
+        id: u64,
+        name: String,
+        phantom: PhantomData<T>,
+    }
+
+    struct FreeFeature;
+    struct PaidFeature;
+
+    trait Free {
+        fn feature1(&self);
+        fn feature2(&self);
+    }
+
+    trait Paid: Free {
+        fn paid_feature(&self);
+    }
+
+    /// 为 Customer<T> 实现需要的方法
+    impl <T> Customer<T> {
+        fn new(name: String) -> Self {
+            Self { id: NEXT_ID.fetch_add(1, atomic::Ordering::Relaxed), name, phantom: PhantomData }
+        }
+    }
+
+    /// 免费用户可以升级到付费用户
+    impl Customer<FreeFeature> {
+        fn andvance(self, payment: f64) -> Customer<PaidFeature> {
+            println!("{} ({})  将花费 {:.2} 元，升级到付费用户", self.name, self.id, payment);
+            self.into()
+        }
+    }
+
+    /// 所有客户都有权使用免费功能
+    impl <T> Free for Customer<T> {
+        fn feature1(&self) {
+            println!("{} 正在使用免费功能一", self.name);
+        }
+        fn feature2(&self) {
+            println!("{} 正在使用免费功能二",  self.name);
+        }
+    }
+
+    /// 付费用户才能使用的功能
+    impl Paid for Customer<PaidFeature> {
+        fn paid_feature(&self) {
+            println!("{} 正在使用付费功能",  self.name);
+        }
+    }
+
+    ///允许免费用户转换成付费用户
+    impl From<Customer<FreeFeature>> for Customer<PaidFeature> {
+        fn from(c: Customer<FreeFeature>) -> Self {
+            Self::new(c.name)
+        }
+    }
+
+    #[test]
+    fn test_customer() {
+        // 一开始是免费用户
+        let customer = Customer::<FreeFeature>::new("MichaelFu".to_owned());
+        customer.feature1();
+        customer.feature2();
+
+        // 升级成付费用户，可能使用付费功能和普通功能
+        let customer = customer.andvance(99.99);
+        customer.feature1();
+        customer.feature2();
+        customer.paid_feature();
+    }
+    //使用 PhantomData<T> 表示我们的结构体拥有 T 类型的数据，当我们的结构体删除的时候，可能会删除一个或者多个 T 类型的实例。但是，如果我们的结构体实际上并不拥有类型 T 的数据，
+    //那么我们最好使用 PhantomData<&'a T> 或者 PhantomData<*const T> 。
 
 }
