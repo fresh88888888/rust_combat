@@ -36,9 +36,22 @@ mod tests {
     //在《【Rust】所有权》章节中，我们说到函数传值会转移值得所有权，for 循环也会，例如，对下面的代码，我们在将 table 传递给 show 函数之后，table 就处于未初始化状态：
 
     use std::{
-        ops::{Add, AddAssign}, borrow::Cow, vec, collections::BTreeSet, iter::from_fn, marker::PhantomData, sync::atomic::{AtomicU64, self}, any::type_name,
+        borrow::Cow,
+        collections::BTreeSet,
+        fmt::{Debug, Display},
+        iter::from_fn,
+        marker::PhantomData,
+        ops::{Add, AddAssign},
+        sync::{
+            atomic::{self, AtomicU64},
+            Arc, Mutex,
+        },
+        thread,
+        time::Duration,
+        vec,
     };
 
+    use lazy_static::__Deref;
     use rand::random;
 
     use super::*;
@@ -386,14 +399,17 @@ mod tests {
         pixel: Vec<P>,
     }
 
-    impl <P: Default + Copy> Img<P> {
+    impl<P: Default + Copy> Img<P> {
         /// Create a new image of the given size.
         fn new(width: usize, height: usize) -> Img<P> {
-            Img { width, pixel: vec![P::default(); width * height] }
+            Img {
+                width,
+                pixel: vec![P::default(); width * height],
+            }
         }
     }
 
-    impl <P> std::ops::Index<usize> for Img<P> {
+    impl<P> std::ops::Index<usize> for Img<P> {
         type Output = [P];
 
         fn index(&self, row: usize) -> &[P] {
@@ -402,7 +418,7 @@ mod tests {
         }
     }
 
-    impl <P> std::ops::IndexMut<usize> for Img<P> {
+    impl<P> std::ops::IndexMut<usize> for Img<P> {
         fn index_mut(&mut self, row: usize) -> &mut [P] {
             let start: usize = row * self.width;
             &mut self.pixel[start..start + self.width]
@@ -440,7 +456,7 @@ mod tests {
         println!("{}", show_cow(replace_colon("hello world")));
         println!("{}", show_cow(replace_colon("hello:world")));
     }
- 
+
     #[test]
     fn iterator_test() {
         let v = vec![4, 20, 12, 8, 6];
@@ -462,12 +478,13 @@ mod tests {
         assert_eq!(it.next(), Some("Liebesträume No. 3".to_string()));
         assert_eq!(it.next(), Some("Lucy in the Sky With Diamonds".to_string()));
         assert_eq!(it.next(), None);
-        
     }
 
     #[test]
     fn from_fn_test() {
-        let lengths: Vec<f64> = from_fn(|| Some((random::<f64>() - random::<f64>()).abs())).take(1000).collect();
+        let lengths: Vec<f64> = from_fn(|| Some((random::<f64>() - random::<f64>()).abs()))
+            .take(1000)
+            .collect();
         println!("{:?}", lengths);
     }
     //由于这个迭代器永远返回 Some(f64)，所以它永远不会结束，但是我们通过 take(1000) 只取了前 1000 个值。
@@ -497,13 +514,17 @@ mod tests {
     #[test]
     fn iterator_adapter_test() {
         let text = " ponies \n giraffes\niguanas \nsquid".to_string();
-        let v: Vec<&str> = text.lines().map(str::trim).filter(|s| *s != "iguanas").collect();
+        let v: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|s| *s != "iguanas")
+            .collect();
         assert_eq!(v, ["ponies", "giraffes", "squid"]);
     }
 
     /// std::marker::PhantomData 是一个零大小的类型，用于标记一些类型，这些类型看起来拥有类型 T，但实际上并没有：
     /// Rust 并不希望在定义类型时，出现目前还没使用，但未来会被使用的泛型参数，例如未使用的生命周期参数以及未使用的类型。
-    
+
     #[derive(Debug, PartialEq, Eq, Default)]
     struct Identifier<T> {
         inner: u64,
@@ -531,14 +552,14 @@ mod tests {
 
     /// 我们可以使用泛型结构体来实现对同一种类对象不同子类对象的区分，例如，我们的系统中要设计这样一个功能，将用户分为免费用户和付费用户，而且免费用户在体验免费功能之后，
     /// 如果想升级成付费用户也是可以的。按照我们常规的思维，可能是定义两个结构体 FreeCustomer 以及 PaidCustomer，但是我们可以通过泛型结构体来实现，例如：
-    /// 
+    ///
     /// struct Customer<T> {
     ///   id: u64,
     ///   name: String,
     /// }
-    /// 
+    ///
     /// 不过，我们这里的 T 又无处安放，所以又不得不使用 PhantomData，它就像一个占位符，但是又没有大小，可以为我们持有在声明时使用不到的数据：
-    
+
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
     struct Customer<T> {
@@ -560,34 +581,41 @@ mod tests {
     }
 
     /// 为 Customer<T> 实现需要的方法
-    impl <T> Customer<T> {
+    impl<T> Customer<T> {
         fn new(name: String) -> Self {
-            Self { id: NEXT_ID.fetch_add(1, atomic::Ordering::Relaxed), name, phantom: PhantomData }
+            Self {
+                id: NEXT_ID.fetch_add(1, atomic::Ordering::Relaxed),
+                name,
+                phantom: PhantomData,
+            }
         }
     }
 
     /// 免费用户可以升级到付费用户
     impl Customer<FreeFeature> {
         fn andvance(self, payment: f64) -> Customer<PaidFeature> {
-            println!("{} ({})  将花费 {:.2} 元，升级到付费用户", self.name, self.id, payment);
+            println!(
+                "{} ({})  将花费 {:.2} 元，升级到付费用户",
+                self.name, self.id, payment
+            );
             self.into()
         }
     }
 
     /// 所有客户都有权使用免费功能
-    impl <T> Free for Customer<T> {
+    impl<T> Free for Customer<T> {
         fn feature1(&self) {
             println!("{} 正在使用免费功能一", self.name);
         }
         fn feature2(&self) {
-            println!("{} 正在使用免费功能二",  self.name);
+            println!("{} 正在使用免费功能二", self.name);
         }
     }
 
     /// 付费用户才能使用的功能
     impl Paid for Customer<PaidFeature> {
         fn paid_feature(&self) {
-            println!("{} 正在使用付费功能",  self.name);
+            println!("{} 正在使用付费功能", self.name);
         }
     }
 
@@ -614,4 +642,227 @@ mod tests {
     //使用 PhantomData<T> 表示我们的结构体拥有 T 类型的数据，当我们的结构体删除的时候，可能会删除一个或者多个 T 类型的实例。但是，如果我们的结构体实际上并不拥有类型 T 的数据，
     //那么我们最好使用 PhantomData<&'a T> 或者 PhantomData<*const T> 。
 
+    /// 很多时候，我们需要实现一些自动优化的数据结构，在某些情况下是一种优化的数据结构和相应的算法，在其他情况下使用通用的结构和通用的算法。比如当一个 HashSet 的内容比较少的时候，
+    /// 可以用数组实现，但内容逐渐增多，再转换成用哈希表实现。如果我们想让使用者不用关心这些实现的细节，使用同样的接口就能享受到更好的性能，那么，就可以考虑用智能指针来统一它的行为。
+    ///
+    /// 我们来实现一个智能 String，Rust 下 String 在栈上占了 24 个字节，然后在堆上存放字符串实际的内容，对于一些比较短的字符串，这很浪费内存。
+    ///
+    /// 参考 Cow，我们可以用一个 enum 来处理：当字符串小于 N 字节时，我们直接用栈上的数组，否则使用 String。但是这个 N 不宜太大，否则当使用 String 时，会比目前的版本浪费内存。
+    ///
+    /// 当使用 enum 时，额外的 tag + 为了对齐而使用的 padding 会占用一些内存。因为 String 结构是 8 字节对齐的，我们的 enum 最小 8 + 24 = 32 个字节。
+    ///
+    /// 所以，可以设计一个数据结构，内部用 1 个字节表示字符串的长度，用 30 个字节表示字符串内容，再加上 1 个字节的 tag，正好也是 32 字节，可以和 String 放在一个 enum 里使用，
+    /// 我们暂且称这个 enum 叫 SmartString，它的结构如下图所示：
+
+    /// INLINE_STRING_MAX_LEN represent the maximum length. that can be stored in the stack.
+    const INLINE_STRING_MAX_LEN: usize = 30;
+
+    /// InlineString 会被存储在栈上，最多占用 32 字节
+    struct InlineString {
+        len: u8,
+        data: [u8; INLINE_STRING_MAX_LEN],
+    }
+
+    impl InlineString {
+        /// 这里的 new 接口不能暴露出去，我们需要在调用的时候保证传入的字节长度小于 INLINE_STRING_MAX_LEN
+        fn new(input: impl AsRef<str>) -> Self {
+            let bytes = input.as_ref().as_bytes();
+            let len = bytes.len();
+            let mut data = [0u8; INLINE_STRING_MAX_LEN];
+            data[..len].copy_from_slice(bytes);
+            Self {
+                len: len as u8,
+                data,
+            }
+        }
+    }
+
+    impl __Deref for InlineString {
+        type Target = str;
+
+        fn deref(&self) -> &Self::Target {
+            // 由于生成 InlineString 的接口是隐藏的，它只能来自字符串，所以下面这行是安全的
+            std::str::from_utf8(&self.data[..self.len as usize]).unwrap()
+        }
+    }
+
+    impl Debug for InlineString {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.deref())
+        }
+    }
+
+    #[derive(Debug)]
+    enum SmartString {
+        Inline(InlineString),
+        Standard(String),
+    }
+
+    impl __Deref for SmartString {
+        type Target = str;
+
+        fn deref(&self) -> &Self::Target {
+            match *self {
+                SmartString::Inline(ref v) => v.deref(),
+                SmartString::Standard(ref v) => v.deref(),
+            }
+        }
+    }
+
+    impl From<&str> for SmartString {
+        fn from(s: &str) -> Self {
+            match s.len() > INLINE_STRING_MAX_LEN {
+                true => SmartString::Standard(s.to_owned()),
+                _ => SmartString::Inline(InlineString::new(s)),
+            }
+        }
+    }
+
+    impl Display for SmartString {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.deref())
+        }
+    }
+
+    #[test]
+    fn smart_string_test() {
+        let len1 = std::mem::size_of::<SmartString>();
+        let len2 = std::mem::size_of::<InlineString>();
+        println!("Len: SmartString {}, Len: InlineString {}", len1, len2);
+        let s1: SmartString = "hello world".into();
+        let s2: SmartString = SmartString::from("这是一个超过了三十个字节的很长很长的字符串");
+        println!("s1: {}, s2: {}", s1, s2);
+
+        //display 输出
+        println!(
+            "s1: {}({} bytes, {} chars), s2: {}({} bytes, {} chars)",
+            s1,
+            s1.len(),
+            s1.chars().count(),
+            s2,
+            s2.len(),
+            s2.chars().count()
+        );
+
+        assert!(s1.ends_with("world"));
+        assert!(s2.starts_with("这是"))
+    }
+
+    /// 使用 std::sync::Mutex 可以多线程共享可变数据，Mutex、RwLock 和原子类型，即使声明为 non-mut，这些类型也可以修改：
+    #[test]
+    fn mutex_test() {
+        // 用 Arc 来提供并发环境下的共享所有权（使用引用计数）
+        let metrics: Arc<Mutex<HashMap<Cow<'static, str>, usize>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        for _ in 1..32 {
+            let m = metrics.clone();
+            thread::spawn(move || {
+                let mut g = m.lock().unwrap();
+                // 此时只有拿到 MutexGuard 的线程可以访问 HashMap
+                let data = &mut *g;
+
+                // Cow 实现了很多数据结构的 From trait，所以我们可以用 "hello".into() 生成 Cow
+                let value = data.entry("hello".into()).or_insert(0);
+                *value += 1;
+
+                // MutexGuard 被 Drop，锁被释放
+            });
+        }
+
+        thread::sleep(Duration::from_millis(200));
+        println!("metrics: {:?}", metrics.lock().unwrap());
+    }
+
+    /// 使用 unsafe 特性构造指向同一块内存的两个变量，导致 Double Free：
+    #[test]
+    fn double_free_test() {
+        let mut d = String::from("cccc");
+        let d_len = d.len();
+
+        let mut c = String::with_capacity(d_len);
+        unsafe {
+            std::ptr::copy(&d, &mut c, 1);
+        };
+        println!("{:?}", c.as_ptr());
+
+        println!("{:?}", d.as_ptr());
+        d.push('c');
+        println!("{}", d);
+    }
+
+    #[test]
+    fn arc_deref_move_test() {
+        let s = Arc::new(Box::new("hello".to_string()));
+        println!("{:p}", &s);
+        println!("{:p}", s.as_ptr());
+        // DerefMove Error : cannot move out of an `Arc`
+        //但如果换成 Box 是可以的。
+        let s2 = s;
+        // println!("{:p}", s.as_ptr()); // Moved s
+        println!("{:p}", s2.as_ptr());
+    }
+
+    /// 泛型参数可以是早期绑定或晚期绑定，当前（以及在可预见的将来）类型参数总是早期绑定，但生命周期参数可以是早期绑定或后绑定。早期绑定参数由编译器在单态化期间确定，由于类型参数始终是早期绑定的，因此不能拥具有未解析类型参数的值。
+    fn m<T>() {}
+    fn s<'a>(_: &'a ()) {}
+    #[test]
+    fn par_bind_test() {
+        let m1 = m::<u8>;
+        //let m2 = m; // error: cannot infer type for `T`
+        let m3 = s; // ok even though 'a isn't provided
+        //出于这个原因，我们不能指定生命周期直到它被调用，也不能让借用检查器去推断它：
+        // error: cannot specify lifetime arguments explicitly if late bound lifetime parameters are present
+        //let m4 = s::<'static>;
+
+        // error: cannot specify lifetime arguments explicitly if late bound lifetime parameters are present
+        //let m5 = s::<'_>;
+    }
+
+    //晚期绑定参数的想法与 Rust 的一个称为 “高级 Trait 边界”（HRTB）的特性有很大的重叠，这是一种机制，用于表示 trait 参数的界限是后期界限。目前这仅限于生命周期参数，可以使用 for 关键字表达生命周期的 HRTB，
+    //例如，对于上面的 m1：
+
+    //let m1: impl for<'r> Fn(&'r ()) = m;
+
+    //可以把它理解为这里有一个生命周期，但是我们目前还不需要知道它。
+
+    //后期绑定生命周期总是无限的；没有语法来表示必须比其他生命周期更长的后期绑定生命周期：
+
+    //除非开发人员明确使用 HRTB 作为语法，否则数据类型的生命周期总是提前绑定的。在函数上，生命周期默认为后期绑定，但在以下情况下可以提前绑定：
+    //生命周期在函数签名之外声明，例如在结构体的关联方法中，它可以来自结构体本身；
+    //生命周期参数以它必须超过的其他生命周期为界；
+
+    //下面这段代码编译失败，原因很很直接，我们对 buf 存在两次可变借用，但是我们的第一次可变借用在获取 b1 之后就应该失效，只要 buf 存在，b1 和 b2 就应该保持有效。但是从 read_bytes 的实现中我们可以看出，
+    //它有一个后期绑定生命周期参数，返回值还和每次调用的可变借用必须具有相同生命周期，所以可变借用得保留到返回值最后一次使用位置。
+
+    //但是我们将我们的 Buffer 改改，让它拥有一个具有 'a 的 buf，而且让 read_bytes 的返回值生命周期跟 buf 相同，这样就和它的调用者没关系了，生成 b1 和 b2 的可变借用在它们使用完就结束了，
+    //这里 read_bytes 的参数生命周期是早期绑定的，在编译期间就能但太态化。
+    struct Buffer<'a> {
+        buf: &'a [u8],
+        pos: usize,
+    }
+
+    impl <'b , 'a: 'b> Buffer<'a> {
+        fn new(b: &'a [u8]) -> Buffer {
+            Buffer { buf: b, pos: 0, }
+        }
+
+        fn read_bytes(&'b mut self) -> &'a [u8] {
+            self.pos += 3;
+            &self.buf[self.pos - 3..self.pos]
+        }
+    }
+
+    fn print(b1: &[u8], b2: &[u8]) {
+        println!("{:#?} {:#?}", b1, b2);
+    }
+
+    #[test]
+    fn buffer_test() {
+        let v = vec![1, 2, 3, 4, 5, 6];
+        let mut buf = Buffer::new(&v);
+        let b1 = buf.read_bytes();  // 第一次可变借用，相当于 (&mut buf).read_bytes()
+        let b2 = buf.read_bytes();  // 第二次可变借用
+        print(b1, b2);                     // b1 和 b2 引用至 v，和 v 有相同的生命周期
+
+    }
 }
