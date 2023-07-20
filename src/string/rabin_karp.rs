@@ -133,6 +133,7 @@ mod tests {
     fn not_found2() {
         let index = rabin_karp("ababab".to_string(), "bababa".to_string());
         assert_eq!(index, vec![]);
+ 
     }
 
     #[test]
